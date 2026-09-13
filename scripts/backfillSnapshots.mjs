@@ -90,14 +90,14 @@ try {
 
 const app = initializeApp({
   credential: cert(serviceAccount),
-  projectId: serviceAccount.project_id || 'ourtrackerfixed',
+  projectId: serviceAccount.project_id || 'gen-lang-client-0800917980',
 });
 
-// A base de dados específica do Firestore
+// A base de dados do Firestore (por defeito usa a nativa gratuita '(default)')
 const TARGET_DATABASE_ID =
   process.env.FIRESTORE_DATABASE_ID ||
   process.env.FIREBASE_DATABASE_ID ||
-  'ai-studio-ourtracker-d269b44d-bb64-42ab-8187-1d0e7de7e72c';
+  '(default)';
 
 const db = TARGET_DATABASE_ID && TARGET_DATABASE_ID !== '(default)'
   ? getFirestore(app, TARGET_DATABASE_ID)

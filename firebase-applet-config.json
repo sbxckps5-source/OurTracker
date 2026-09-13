@@ -1,11 +1,11 @@
 {
-  "projectId": "ourtrackerfixed",
-  "appId": "1:62392461680:web:99c39341b73da0dcf187b5",
-  "apiKey": "AIzaSyBkTG7LfDcrOq88pacdah8sVKM3W7C64jM",
-  "authDomain": "ourtrackerfixed.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-ourtracker-d269b44d-bb64-42ab-8187-1d0e7de7e72c",
-  "storageBucket": "ourtrackerfixed.firebasestorage.app",
-  "messagingSenderId": "62392461680",
+  "projectId": "gen-lang-client-0800917980",
+  "appId": "1:1030347391511:web:059733106d4cd4ba011252",
+  "apiKey": "AIzaSyA1Lv5Z40-QXSD93T1vhRiIF2ZsmV9Tisk",
+  "authDomain": "gen-lang-client-0800917980.firebaseapp.com",
+  "firestoreDatabaseId": "(default)",
+  "storageBucket": "gen-lang-client-0800917980.firebasestorage.app",
+  "messagingSenderId": "1030347391511",
   "measurementId": "G-814WP73V0L",
   "oAuthClientId": "",
   "recaptchaSiteKey": ""

@@ -1,5 +1,6 @@
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import * as fs from 'fs';
 
 function parseServiceAccountKey(rawInput) {
   if (!rawInput) {
@@ -83,57 +84,163 @@ const app = initializeApp({
   projectId: serviceAccount.project_id || 'gen-lang-client-0800917980',
 });
 
-const NAMED_DB_ID = 'ai-studio-ourtracker-a6232195-a0c1-4196-8aea-276fd2cc0112';
+// Lista de bases de dados de origem possíveis
+const candidateSourceDbIds = [
+  process.env.SOURCE_DATABASE_ID,
+  'ai-studio-ourtracker-d269b44d-bb64-42ab-8187-1d0e7de7e72c',
+  'ai-studio-ourtracker-a6232195-a0c1-4196-8aea-276fd2cc0112',
+].filter(Boolean);
 
-// 1. Origem: Base de dados nomeada antiga
-const sourceDb = getFirestore(app, NAMED_DB_ID);
-// 2. Destino: Base de dados nativa (default) gratuita
+// Destino: Base de dados nativa (default)
 const targetDb = getFirestore(app);
 
-async function copyCollection(sourceColRef, targetColRef) {
-  const snapshot = await sourceColRef.get();
-  console.log(`📂 A migrar coleção "${sourceColRef.path}": ${snapshot.size} documento(s) encontrado(s).`);
+// Função recursiva para exportar todos os documentos e subcoleções de uma base
+async function dumpAllFromDb(databaseInstance, dbName) {
+  const result = {};
+  try {
+    const rootCollections = await databaseInstance.listCollections();
+    console.log(`🔍 [${dbName}] Encontradas ${rootCollections.length} coleções de topo.`);
+
+    for (const col of rootCollections) {
+      result[col.id] = await dumpCollection(col, dbName);
+    }
+  } catch (err) {
+    console.warn(`⚠️ Aviso ao ler base [${dbName}]: ${err.message}`);
+  }
+  return result;
+}
+
+async function dumpCollection(colRef, dbName) {
+  const colData = {};
+  const snapshot = await colRef.get();
+  console.log(`   📂 [${dbName}] Lendo coleção "${colRef.path}": ${snapshot.size} documento(s)`);
 
   for (const docSnap of snapshot.docs) {
-    const data = docSnap.data();
-    const targetDocRef = targetColRef.doc(docSnap.id);
+    const docData = docSnap.data();
+    const subCollections = await docSnap.ref.listCollections();
+    const subColData = {};
 
-    // Copiar documento preservando todos os campos
-    await targetDocRef.set(data, { merge: true });
-    console.log(`   ↳ ✅ Documento copiado com sucesso: ${targetDocRef.path}`);
+    for (const subCol of subCollections) {
+      subColData[subCol.id] = await dumpCollection(subCol, dbName);
+    }
 
-    // Verificar e copiar subcoleções recursivamente
+    colData[docSnap.id] = {
+      _data: docData,
+      _subcollections: subColData,
+    };
+  }
+  return colData;
+}
+
+// Função para apagar recursivamente uma coleção
+async function deleteCollectionRecursively(colRef) {
+  const snapshot = await colRef.get();
+  for (const docSnap of snapshot.docs) {
     const subCollections = await docSnap.ref.listCollections();
     for (const subCol of subCollections) {
-      const targetSubColRef = targetDocRef.collection(subCol.id);
-      await copyCollection(subCol, targetSubColRef);
+      await deleteCollectionRecursively(subCol);
+    }
+    await docSnap.ref.delete();
+  }
+}
+
+// Função para restaurar recursivamente dados num Firestore
+async function restoreCollectionData(targetColRef, colData) {
+  for (const [docId, docObj] of Object.entries(colData)) {
+    const targetDocRef = targetColRef.doc(docId);
+    if (docObj._data && Object.keys(docObj._data).length > 0) {
+      await targetDocRef.set(docObj._data, { merge: true });
+      console.log(`   ↳ 💾 Gravado documento: ${targetDocRef.path}`);
+    }
+
+    if (docObj._subcollections) {
+      for (const [subColId, subColData] of Object.entries(docObj._subcollections)) {
+        const targetSubColRef = targetDocRef.collection(subColId);
+        await restoreCollectionData(targetSubColRef, subColData);
+      }
     }
   }
 }
 
-async function runMigration() {
-  console.log(`\n=======================================================`);
-  console.log(`🚀 INICIANDO MIGRAÇÃO DO FIRESTORE`);
-  console.log(`   Origem  : [${NAMED_DB_ID}]`);
-  console.log(`   Destino : [(default) - Plano Gratuito Spark]`);
-  console.log(`=======================================================\n`);
-
-  const rootCollections = await sourceDb.listCollections();
-  if (rootCollections.length === 0) {
-    console.log(`⚠️ Nenhuma coleção de topo encontrada na base de origem.`);
-    return;
+// Função de fusão recursiva de árvores de dados
+function mergeDataTrees(target, source) {
+  for (const key of Object.keys(source)) {
+    if (!target[key]) {
+      target[key] = source[key];
+    } else {
+      // Se tiver _data, fundir campos
+      if (source[key]._data) {
+        target[key]._data = { ...(target[key]._data || {}), ...source[key]._data };
+      }
+      // Se tiver subcoleções, fundir recursivamente
+      if (source[key]._subcollections) {
+        target[key]._subcollections = target[key]._subcollections || {};
+        for (const subKey of Object.keys(source[key]._subcollections)) {
+          target[key]._subcollections[subKey] = target[key]._subcollections[subKey] || {};
+          mergeDataTrees(target[key]._subcollections[subKey], source[key]._subcollections[subKey]);
+        }
+      }
+    }
   }
-
-  for (const col of rootCollections) {
-    const targetColRef = targetDb.collection(col.id);
-    await copyCollection(col, targetColRef);
-  }
-
-  console.log(`\n✨ MIGRAÇÃO CONCLUÍDA COM SUCESSO!`);
-  console.log(`Todos os dados, subcoleções e históricos de snapshots foram replicados na base (default).\n`);
 }
 
-runMigration().catch((err) => {
-  console.error('❌ Falha crítica durante a migração:', err);
+async function runFullBackupAndMigration() {
+  console.log(`\n=======================================================`);
+  console.log(`🚀 INICIANDO BACKUP, LIMPEZA E RESTAURO UNIFICADO NA (default)`);
+  console.log(`=======================================================\n`);
+
+  const consolidatedBackup = {};
+
+  // 1. Fazer backup do que já existe na base (default)
+  console.log(`📦 1. A ler e fazer backup da base [(default)] atual...`);
+  const defaultExistingData = await dumpAllFromDb(targetDb, '(default)');
+  fs.writeFileSync('backup_default_before_reset.json', JSON.stringify(defaultExistingData, null, 2));
+  console.log(`   ✅ Backup da (default) guardado em backup_default_before_reset.json`);
+  mergeDataTrees(consolidatedBackup, defaultExistingData);
+
+  // 2. Fazer backup de cada base de dados de origem nomeada
+  for (const sourceDbId of candidateSourceDbIds) {
+    console.log(`\n📦 2. A ler dados da base [${sourceDbId}]...`);
+    try {
+      const sourceDb = getFirestore(app, sourceDbId);
+      const sourceData = await dumpAllFromDb(sourceDb, sourceDbId);
+      mergeDataTrees(consolidatedBackup, sourceData);
+      console.log(`   ✅ Dados de [${sourceDbId}] lidos e unificados no backup.`);
+    } catch (err) {
+      console.warn(`   ⚠️ Não foi possível ler [${sourceDbId}]: ${err.message}`);
+    }
+  }
+
+  // Guardar backup consolidado total em disco
+  fs.writeFileSync('backup_consolidado_todas_bases.json', JSON.stringify(consolidatedBackup, null, 2));
+  console.log(`\n💾 ✅ Backup consolidado total guardado em "backup_consolidado_todas_bases.json"!`);
+
+  // 3. Limpar a base de dados (default)
+  console.log(`\n🧹 3. A limpar coleções existentes na base [(default)]...`);
+  try {
+    const existingCollections = await targetDb.listCollections();
+    for (const col of existingCollections) {
+      console.log(`   🗑️ A limpar coleção "${col.id}"...`);
+      await deleteCollectionRecursively(col);
+    }
+    console.log(`   ✅ Base [(default)] limpa com sucesso.`);
+  } catch (err) {
+    console.warn(`   ⚠️ Aviso ao limpar (default): ${err.message}`);
+  }
+
+  // 4. Restaurar todos os dados unificados na base (default)
+  console.log(`\n✨ 4. A restaurar todos os dados unificados na base [(default)]...`);
+  for (const [colId, colData] of Object.entries(consolidatedBackup)) {
+    console.log(`📂 A restaurar coleção "${colId}" na base (default)...`);
+    const targetColRef = targetDb.collection(colId);
+    await restoreCollectionData(targetColRef, colData);
+  }
+
+  console.log(`\n🎉 MIGRAÇÃO E RESTAURO CONCLUÍDOS COM SUCESSO!`);
+  console.log(`A base (default) agora contém todos os teus dados unificados sem duplicações.\n`);
+}
+
+runFullBackupAndMigration().catch((err) => {
+  console.error('❌ Falha crítica durante o processo:', err);
   process.exit(1);
 });

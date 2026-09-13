@@ -6,8 +6,11 @@ export const app = initializeApp(firebaseConfig);
 
 const databaseId =
   import.meta.env.VITE_FIRESTORE_DATABASE_ID ||
-  firebaseConfig.firestoreDatabaseId ||
-  'ai-studio-ourtracker-d269b44d-bb64-42ab-8187-1d0e7de7e72c';
+  firebaseConfig.firestoreDatabaseId;
 
-export const db = getFirestore(app, databaseId);
+export const db =
+  databaseId && databaseId !== '(default)'
+    ? getFirestore(app, databaseId)
+    : getFirestore(app);
+
 
