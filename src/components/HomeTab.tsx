@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { PortfolioPosition, HoldingDoc, DailySnapshotDoc } from '../types';
 import { subscribeDailySnapshots } from '../services/portfolioService';
+import { SyncWarningBanner } from './SyncWarningBanner';
 
 interface HomeTabProps {
   totalValue?: number;
@@ -10,7 +11,7 @@ interface HomeTabProps {
   resetSignal?: number;
 }
 
-type TimeRange = '1D' | '1S' | '1M' | '3M' | '1A' | 'Tudo';
+type TimeRange = '1D' | '1S' | '1M' | '3M' | '6M' | '1A' | 'Tudo';
 
 interface ChartPoint {
   timestamp: number;
@@ -18,6 +19,15 @@ interface ChartPoint {
   dateStr: string;
   changePercent: number;
   changeEur: number;
+}
+
+// Formatação limpa de data (ex: "19 set 2019" ou "19 set")
+function formatDisplayDate(dateObj: Date): string {
+  const day = dateObj.getDate();
+  const monthNames = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  const month = monthNames[dateObj.getMonth()];
+  const year = dateObj.getFullYear();
+  return `${day} ${month} ${year}`;
 }
 
 // Gerador de curva Bézier suave (Catmull-Rom para Bézier cúbica)
@@ -57,6 +67,16 @@ export const HomeTab: React.FC<HomeTabProps> = ({
   const [selectedRange, setSelectedRange] = useState<TimeRange>('1M');
   const [activePointIndex, setActivePointIndex] = useState<number | null>(null);
   const [snapshots, setSnapshots] = useState<DailySnapshotDoc[]>([]);
+  const [isBenchmarkActive, setIsBenchmarkActive] = useState<boolean>(false);
+  const [benchmarkPoints, setBenchmarkPoints] = useState<{
+    timestamp: number;
+    changePercent: number;
+    close: number;
+    simulatedValue?: number;
+    totalInvested?: number;
+    diffEur?: number;
+  }[]>([]);
+  const [isBenchmarkLoading, setIsBenchmarkLoading] = useState<boolean>(false);
   const svgRef = useRef<SVGSVGElement | null>(null);
 
   // Escutar a subcoleção dailySnapshots no Firestore
@@ -66,13 +86,6 @@ export const HomeTab: React.FC<HomeTabProps> = ({
     });
     return () => unsub();
   }, []);
-
-  // Resetar crosshair se houver resetSignal
-  useEffect(() => {
-    if (resetSignal) {
-      setActivePointIndex(null);
-    }
-  }, [resetSignal]);
 
   // 1. Calcular a data da primeira compra em todas as holdings
   const earliestPurchaseTimestamp = useMemo(() => {
@@ -98,36 +111,267 @@ export const HomeTab: React.FC<HomeTabProps> = ({
     return found ? earliest : Date.now() - 30 * 24 * 60 * 60 * 1000;
   }, [holdings]);
 
-  // 2. Filtrar e formatar pontos do gráfico com base no intervalo selecionado
-  const chartPoints = useMemo(() => {
-    const now = Date.now();
-    const currentVal = totalValue > 0 ? totalValue : 0;
-
-    // Calcular total investido atual a partir dos holdings
-    let totalInvestedCurrent = 0;
+  // Calcular total investido atual a partir dos holdings
+  const totalInvested = useMemo(() => {
+    let invested = 0;
     holdings.forEach((h) => {
       const purchases = Array.isArray(h.purchases) ? h.purchases : [];
       purchases.forEach((p) => {
         const shares = Number(p.shares || 0);
         const price = Number(p.priceEur ?? p.price ?? 0);
         if (shares > 0 && price > 0) {
-          totalInvestedCurrent += shares * price;
+          invested += shares * price;
+        }
+      });
+    });
+    return invested > 0 ? invested : totalValue > 0 ? totalValue : 0;
+  }, [holdings, totalValue]);
+
+  // Fetch SXR8.DE benchmark data when benchmark is active or range changes
+  useEffect(() => {
+    if (!isBenchmarkActive) {
+      setBenchmarkPoints([]);
+      return;
+    }
+
+    let isMounted = true;
+    setIsBenchmarkLoading(true);
+
+    // 1. Identificar se tens compras de SXR8.DE nos teus holdings e extrair todas as compras reais
+    const sxr8Holding = holdings.find((h) => {
+      const t = (h.ticker || '').toUpperCase();
+      return t.includes('SXR8') || t.includes('CSPX') || t.includes('VUAA');
+    });
+
+    // Criar mapa de preço pago pelo utilizador no SXR8.DE por semana (YYYY-WW ou timestamp aproximado)
+    const userSxr8PricesByTime: { timestamp: number; priceEur: number }[] = [];
+    if (sxr8Holding && Array.isArray(sxr8Holding.purchases)) {
+      sxr8Holding.purchases.forEach((p) => {
+        const pDate = typeof p.date === 'string' ? new Date(p.date).getTime() : Number(p.date || 0);
+        const price = Number(p.priceEur ?? p.price ?? 0);
+        if (price > 0 && pDate > 0) {
+          userSxr8PricesByTime.push({ timestamp: pDate, priceEur: price });
+        }
+      });
+      userSxr8PricesByTime.sort((a, b) => a.timestamp - b.timestamp);
+    }
+
+    // 2. Extrair todas as compras de TODAS as ações para calcular o total depositado por data
+    const allDeposits: { date: number; amountEur: number }[] = [];
+    holdings.forEach((h) => {
+      const purchases = Array.isArray(h.purchases) ? h.purchases : [];
+      purchases.forEach((p) => {
+        const pDate = typeof p.date === 'string' ? new Date(p.date).getTime() : Number(p.date || 0);
+        const shares = Number(p.shares || 0);
+        const price = Number(p.priceEur ?? p.price ?? 0);
+        const amount = shares * price;
+        if (amount > 0) {
+          allDeposits.push({
+            date: pDate > 0 ? pDate : h.createdAt || Date.now(),
+            amountEur: amount,
+          });
         }
       });
     });
 
-    if (totalInvestedCurrent === 0 && currentVal > 0) {
-      totalInvestedCurrent = currentVal;
+    // Se não houver compras detalhadas mas houver totalInvested
+    if (allDeposits.length === 0 && totalInvested > 0) {
+      allDeposits.push({
+        date: earliestPurchaseTimestamp,
+        amountEur: totalInvested,
+      });
     }
 
-    // Caso A: Modo 1D (curva fluida suave entre ontem e o valor em tempo real de hoje)
+    allDeposits.sort((a, b) => a.date - b.date);
+
+    // Carregar série de cotações do SXR8.DE para calcular o valor de mercado ao longo do tempo
+    const rangeParam = selectedRange === '1D' ? '1d' : 'max';
+    fetch(`/api/chart/SXR8.DE?range=${rangeParam}`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
+        if (!isMounted) return;
+        if (data && Array.isArray(data.points) && data.points.length > 0) {
+          const sxr8MarketPoints = data.points
+            .map((pt: any) => ({
+              timestamp: Number(pt.timestamp),
+              price: Number(pt.priceEur ?? pt.price ?? pt.close ?? 0),
+            }))
+            .filter((pt: any) => !isNaN(pt.price) && pt.price > 0 && !isNaN(pt.timestamp));
+
+          if (sxr8MarketPoints.length === 0) {
+            setBenchmarkPoints([]);
+            return;
+          }
+
+          sxr8MarketPoints.sort((a: any, b: any) => a.timestamp - b.timestamp);
+          const currentSxr8Price = sxr8MarketPoints[sxr8MarketPoints.length - 1].price;
+
+          // 3. Para cada depósito semanal/mensal, calcular as ações simuladas de SXR8.DE:
+          // Usa o preço que compraste no SXR8.DE nessa data. Se não tiveres compra de SXR8 nessa data, usa a cotação real de mercado do SXR8 nesse dia.
+          const simulatedSxr8Purchases = allDeposits.map((dep) => {
+            let sxr8PriceOnDate = 0;
+
+            // Procurar se tens compra tua de SXR8 na mesma semana (+- 5 dias)
+            const userPriceMatch = userSxr8PricesByTime.find(
+              (up) => Math.abs(up.timestamp - dep.date) <= 5 * 24 * 3600 * 1000
+            );
+
+            if (userPriceMatch && userPriceMatch.priceEur > 0) {
+              sxr8PriceOnDate = userPriceMatch.priceEur;
+            } else {
+              // Buscar a cotação de fecho do SXR8.DE mais próxima da data
+              let bestPt = sxr8MarketPoints[0];
+              let minDiff = Infinity;
+              for (const pt of sxr8MarketPoints) {
+                const diff = Math.abs(pt.timestamp - dep.date);
+                if (diff < minDiff) {
+                  minDiff = diff;
+                  bestPt = pt;
+                }
+              }
+              sxr8PriceOnDate = bestPt.price;
+            }
+
+            const simulatedShares = sxr8PriceOnDate > 0 ? dep.amountEur / sxr8PriceOnDate : 0;
+            return {
+              date: dep.date,
+              amountEur: dep.amountEur,
+              shares: simulatedShares,
+              pricePaid: sxr8PriceOnDate,
+            };
+          });
+
+          // Total acumulado de ações simuladas de SXR8.DE
+          const totalAccumShares = simulatedSxr8Purchases.reduce((sum, p) => sum + p.shares, 0);
+          const totalAccumInvested = simulatedSxr8Purchases.reduce((sum, p) => sum + p.amountEur, 0);
+
+          // 4. Mapear pontos para a curva do gráfico correspondente ao período atual
+          if (selectedRange === '1D') {
+            // Em 1D, calcular variação desde o fecho anterior até agora
+            const prevClose = data.previousCloseEur || data.previousClose || (sxr8MarketPoints[0]?.price ?? currentSxr8Price);
+            const startVal = totalAccumShares > 0 ? totalAccumShares * prevClose : totalInvested;
+            const endVal = totalAccumShares > 0 ? totalAccumShares * currentSxr8Price : totalInvested;
+
+            const pointCount = chartPoints.length > 0 ? chartPoints.length : 20;
+            const now = Date.now();
+            const startTime = now - 24 * 3600 * 1000;
+
+            const dayPoints = [];
+            for (let i = 0; i < pointCount; i++) {
+              const progress = i / (pointCount - 1 || 1);
+              const t = startTime + progress * (now - startTime);
+              const val = startVal + (endVal - startVal) * progress;
+              const diffEur = val - totalAccumInvested;
+              const pct = totalAccumInvested > 0 ? (diffEur / totalAccumInvested) * 100 : 0;
+
+              dayPoints.push({
+                timestamp: t,
+                close: currentSxr8Price,
+                simulatedValue: Number(val.toFixed(2)),
+                totalInvested: Number(totalAccumInvested.toFixed(2)),
+                diffEur: Number(diffEur.toFixed(2)),
+                changePercent: Number(pct.toFixed(2)),
+              });
+            }
+
+            setBenchmarkPoints(dayPoints);
+          } else {
+            // Para 1S, 1M, 3M, 6M, 1A, Tudo:
+            const chartStartTime = chartPoints[0]?.timestamp || (Date.now() - 30 * 24 * 3600 * 1000);
+            let filteredSxr8Points = sxr8MarketPoints.filter(
+              (pt: any) => pt.timestamp >= chartStartTime - 24 * 3600 * 1000
+            );
+
+            if (filteredSxr8Points.length === 0) {
+              filteredSxr8Points = sxr8MarketPoints.slice(-30);
+            }
+
+            const mapped = filteredSxr8Points.map((pt: any) => {
+              let accumShares = 0;
+              let accumInvested = 0;
+
+              simulatedSxr8Purchases.forEach((sp) => {
+                if (sp.date <= pt.timestamp + 12 * 3600 * 1000) {
+                  accumShares += sp.shares;
+                  accumInvested += sp.amountEur;
+                }
+              });
+
+              if (accumInvested === 0 && simulatedSxr8Purchases.length > 0) {
+                accumShares = simulatedSxr8Purchases[0].shares;
+                accumInvested = simulatedSxr8Purchases[0].amountEur;
+              }
+
+              const simulatedValue = accumShares * pt.price;
+              const diffEur = simulatedValue - accumInvested;
+              const pct = accumInvested > 0 ? (diffEur / accumInvested) * 100 : 0;
+
+              return {
+                timestamp: pt.timestamp,
+                close: pt.price,
+                simulatedValue: Number(simulatedValue.toFixed(2)),
+                totalInvested: Number(accumInvested.toFixed(2)),
+                diffEur: Number(diffEur.toFixed(2)),
+                changePercent: isNaN(pct) ? 0 : Number(pct.toFixed(2)),
+              };
+            });
+
+            setBenchmarkPoints(mapped);
+          }
+        } else {
+          setBenchmarkPoints([]);
+        }
+      })
+      .catch((err) => {
+        console.error('Error fetching SXR8.DE benchmark:', err);
+        if (isMounted) setBenchmarkPoints([]);
+      })
+      .finally(() => {
+        if (isMounted) setIsBenchmarkLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isBenchmarkActive, selectedRange, holdings, totalInvested]);
+
+  // Resetar crosshair se houver resetSignal
+  useEffect(() => {
+    if (resetSignal) {
+      setActivePointIndex(null);
+    }
+  }, [resetSignal]);
+
+  // 2. Filtrar e formatar pontos do gráfico com base no intervalo selecionado
+  const chartPoints = useMemo(() => {
+    const now = Date.now();
+    const currentVal = totalValue > 0 ? totalValue : 0;
+    const totalInvestedCurrent = totalInvested;
+
+    // Caso A: Modo 1D (evolução real do portfólio desde o fecho do dia anterior até ao valor atual)
     if (selectedRange === '1D') {
       const yesterdaySnap = snapshots.length > 0 ? snapshots[snapshots.length - 1] : null;
+      
+      // Calcular valor de fecho anterior real a partir das posições
+      let calculatedYesterdayVal = 0;
+      positions.forEach((p) => {
+        if (!p.isError && p.previousValue !== undefined && p.previousValue > 0) {
+          calculatedYesterdayVal += p.previousValue;
+        } else if (!p.isError && p.value > 0) {
+          calculatedYesterdayVal += p.value;
+        }
+      });
+
       const startVal =
-        yesterdaySnap?.totalValue && yesterdaySnap.totalValue > 0
+        calculatedYesterdayVal > 0
+          ? calculatedYesterdayVal
+          : yesterdaySnap?.totalValue && yesterdaySnap.totalValue > 0
           ? yesterdaySnap.totalValue
           : currentVal > 0
-          ? currentVal * 0.994
+          ? currentVal
           : 1000;
 
       const pointCount = 20;
@@ -137,20 +381,19 @@ export const HomeTab: React.FC<HomeTabProps> = ({
       for (let i = 0; i < pointCount; i++) {
         const progress = i / (pointCount - 1 || 1);
         const t = startTime + progress * (now - startTime);
-        const organicNoise = Math.sin(i * 0.9) * (startVal * 0.0025) * (1 - progress);
         const val =
           i === pointCount - 1
             ? currentVal
-            : Math.max(0, startVal + (currentVal - startVal) * progress + organicNoise);
+            : startVal + (currentVal - startVal) * progress;
 
         const diffFromStart = val - startVal;
         const changePct = startVal > 0 ? (diffFromStart / startVal) * 100 : 0;
-        const timeStr = new Date(t).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
+        const formattedDate = formatDisplayDate(new Date(t));
 
         points.push({
           timestamp: t,
           value: Number(val.toFixed(2)),
-          dateStr: `Hoje, ${timeStr}`,
+          dateStr: formattedDate,
           changePercent: Number(changePct.toFixed(2)),
           changeEur: Number(diffFromStart.toFixed(2)),
         });
@@ -159,7 +402,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
       return points;
     }
 
-    // Caso B: Períodos históricos (1S, 1M, 3M, 1A, Tudo)
+    // Caso B: Períodos históricos (1S, 1M, 3M, 6M, 1A, Tudo)
     let startTime = now;
     switch (selectedRange) {
       case '1S':
@@ -170,6 +413,9 @@ export const HomeTab: React.FC<HomeTabProps> = ({
         break;
       case '3M':
         startTime = now - 90 * 24 * 60 * 60 * 1000;
+        break;
+      case '6M':
+        startTime = now - 180 * 24 * 60 * 60 * 1000;
         break;
       case '1A':
         startTime = now - 365 * 24 * 60 * 60 * 1000;
@@ -193,11 +439,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           s.returnPercent !== undefined ? s.returnPercent : invested > 0 ? (diff / invested) * 100 : 0;
 
         const dateObj = new Date(s.timestamp || s.date);
-        const formattedDate = dateObj.toLocaleDateString('pt-PT', {
-          day: '2-digit',
-          month: 'short',
-          year: selectedRange === '1A' || selectedRange === 'Tudo' ? 'numeric' : undefined,
-        });
+        const formattedDate = formatDisplayDate(dateObj);
 
         return {
           timestamp: s.timestamp || dateObj.getTime(),
@@ -210,11 +452,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
 
       // Anexar o ponto atual em tempo real no final
       const lastPoint = points[points.length - 1];
-      const todayDateStr = new Date().toLocaleDateString('pt-PT', {
-        day: '2-digit',
-        month: 'short',
-        year: selectedRange === '1A' || selectedRange === 'Tudo' ? 'numeric' : undefined,
-      });
+      const todayDateStr = formatDisplayDate(new Date());
 
       if (lastPoint && currentVal > 0 && Math.abs(lastPoint.value - currentVal) > 0.01) {
         const currentDiff = currentVal - totalInvestedCurrent;
@@ -222,7 +460,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
         points.push({
           timestamp: now,
           value: Number(currentVal.toFixed(2)),
-          dateStr: `${todayDateStr} (Agora)`,
+          dateStr: todayDateStr,
           changePercent: Number(currentPct.toFixed(2)),
           changeEur: Number(currentDiff.toFixed(2)),
         });
@@ -250,11 +488,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
       const pct = startVal > 0 ? (diff / startVal) * 100 : 0;
 
       const dateObj = new Date(timestamp);
-      const formattedDate = dateObj.toLocaleDateString('pt-PT', {
-        day: '2-digit',
-        month: 'short',
-        year: selectedRange === '1A' || selectedRange === 'Tudo' ? 'numeric' : undefined,
-      });
+      const formattedDate = formatDisplayDate(dateObj);
 
       points.push({
         timestamp,
@@ -287,13 +521,45 @@ export const HomeTab: React.FC<HomeTabProps> = ({
   const width = 360;
   const height = 190;
   const paddingX = 4;
-  const paddingTop = 14;
-  const paddingBottom = 14;
+  const paddingTop = isBenchmarkActive ? 22 : 14;
+  const paddingBottom = isBenchmarkActive ? 22 : 14;
 
-  const values = chartPoints.map((p) => p.value);
-  const minVal = values.length ? Math.min(...values) : 0;
-  const maxVal = values.length ? Math.max(...values) : 100;
-  const valRange = maxVal - minVal || (maxVal > 0 ? maxVal * 0.1 : 1);
+  const firstPortVal = chartPoints[0]?.value || 1;
+
+  // Calcular limites verticais combinados (Portfolio + Benchmark) com margem de zoom-out
+  const { minVal, maxVal, valRange } = useMemo(() => {
+    const portfolioValues = chartPoints.map((p) => p.value);
+    let allMin = portfolioValues.length ? Math.min(...portfolioValues) : 0;
+    let allMax = portfolioValues.length ? Math.max(...portfolioValues) : 100;
+
+    if (isBenchmarkActive && benchmarkPoints.length > 0) {
+      const benchmarkSimulatedValues = benchmarkPoints.map((bp) =>
+        bp.simulatedValue !== undefined && bp.simulatedValue > 0
+          ? bp.simulatedValue
+          : firstPortVal * (1 + (bp.changePercent || 0) / 100)
+      );
+      const bMin = Math.min(...benchmarkSimulatedValues);
+      const bMax = Math.max(...benchmarkSimulatedValues);
+
+      allMin = Math.min(allMin, bMin);
+      allMax = Math.max(allMax, bMax);
+    }
+
+    let diff = allMax - allMin;
+    if (diff <= 0) diff = allMax > 0 ? allMax * 0.1 : 1;
+
+    // Adicionar margem de folga vertical (Zoom-Out) quando o benchmark está ativo
+    const marginFactor = isBenchmarkActive ? 0.18 : 0.05;
+    const paddedMin = Math.max(0, allMin - diff * marginFactor);
+    const paddedMax = allMax + diff * marginFactor;
+    const finalRange = paddedMax - paddedMin || 1;
+
+    return {
+      minVal: paddedMin,
+      maxVal: paddedMax,
+      valRange: finalRange,
+    };
+  }, [chartPoints, benchmarkPoints, isBenchmarkActive, firstPortVal]);
 
   const getX = (index: number) => {
     if (chartPoints.length <= 1) return width / 2;
@@ -311,9 +577,56 @@ export const HomeTab: React.FC<HomeTabProps> = ({
   }));
 
   const smoothPathD = generateSmoothSvgPath(coordinates);
-  const areaD = coordinates.length > 0
-    ? `${smoothPathD} L ${coordinates[coordinates.length - 1].x.toFixed(2)} ${(height - paddingBottom).toFixed(2)} L ${coordinates[0].x.toFixed(2)} ${(height - paddingBottom).toFixed(2)} Z`
-    : '';
+
+  // Calcular curva Bézier para o Benchmark SXR8.DE mapeado na mesma escala e janela temporal
+  const benchmarkCoordinates = useMemo(() => {
+    if (!isBenchmarkActive || benchmarkPoints.length === 0 || chartPoints.length === 0) return [];
+
+    return benchmarkPoints.map((bp, idx) => {
+      const progress = idx / (benchmarkPoints.length - 1 || 1);
+      const x = paddingX + progress * (width - paddingX * 2);
+
+      // Usar diretamente o valor simulado do portfólio SXR8 na escala Y
+      const val = bp.simulatedValue !== undefined && bp.simulatedValue > 0
+        ? bp.simulatedValue
+        : firstPortVal * (1 + bp.changePercent / 100);
+      const y = getY(val);
+      return { x, y };
+    });
+  }, [isBenchmarkActive, benchmarkPoints, chartPoints.length, firstPortVal, minVal, valRange, height, paddingTop, paddingBottom]);
+
+  const benchmarkSmoothPathD = generateSmoothSvgPath(benchmarkCoordinates);
+
+  // Ponto do benchmark correspondente ao crosshair ativo (percentagem e valor total em EUR com base nas compras simuladas)
+  const { activeBenchmarkPct, activeBenchmarkValue, activeBenchmarkDiffEur } = useMemo(() => {
+    if (!isBenchmarkActive || benchmarkPoints.length === 0) {
+      return { activeBenchmarkPct: null, activeBenchmarkValue: null, activeBenchmarkDiffEur: null };
+    }
+
+    let activeBp = benchmarkPoints[benchmarkPoints.length - 1];
+    if (activePointIndex !== null) {
+      const ratio = activePointIndex / (chartPoints.length - 1 || 1);
+      const bIdx = Math.min(
+        benchmarkPoints.length - 1,
+        Math.max(0, Math.round(ratio * (benchmarkPoints.length - 1)))
+      );
+      activeBp = benchmarkPoints[bIdx] || activeBp;
+    }
+
+    if (!activeBp) {
+      return { activeBenchmarkPct: null, activeBenchmarkValue: null, activeBenchmarkDiffEur: null };
+    }
+
+    const simulatedVal = activeBp.simulatedValue ?? totalInvested * (1 + (activeBp.changePercent || 0) / 100);
+    const diffEur = activeBp.diffEur ?? (simulatedVal - totalInvested);
+    const pct = activeBp.changePercent ?? 0;
+
+    return {
+      activeBenchmarkPct: pct,
+      activeBenchmarkValue: Number(simulatedVal.toFixed(2)),
+      activeBenchmarkDiffEur: Number(diffEur.toFixed(2)),
+    };
+  }, [isBenchmarkActive, benchmarkPoints, activePointIndex, chartPoints.length, totalInvested]);
 
   // Interação de toque / arrasto (Crosshair)
   const handlePointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
@@ -341,43 +654,89 @@ export const HomeTab: React.FC<HomeTabProps> = ({
   };
 
   const isPositiveReturn = activePoint.changePercent >= 0;
+  const isBenchmarkPositive = activeBenchmarkPct !== null && activeBenchmarkPct >= 0;
 
   return (
     <div id="home-tab-container" className="w-full flex-1 flex flex-col px-5 pt-3 pb-8 bg-white select-none">
+      {/* Aviso de falha na automação diária (se decorridos mais de 2 dias úteis sem novos snapshots) */}
+      <SyncWarningBanner snapshots={snapshots} />
+
       {/* 1. Cabeçalho Superior: Valor Total em Destaque & Rentabilidade */}
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex flex-col">
-          <span className="text-3xl font-black text-slate-900 tracking-tight tabular-nums">
-            €{activePoint.value.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </span>
-          {/* Mostra a data correspondente dinamicamente quando o utilizador toca no gráfico */}
-          <span className="text-xs font-semibold text-slate-400 mt-0.5 h-4 transition-all">
-            {isScrubbing ? activePoint.dateStr : ''}
-          </span>
+      <div className="flex flex-col mb-2">
+        {/* Linha Principal do Portfólio */}
+        <div className="flex items-start justify-between">
+          <div className="flex flex-col">
+            <span className="text-3xl font-black text-slate-900 tracking-tight tabular-nums">
+              €{activePoint.value.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+
+          <div className="flex flex-col items-end">
+            <span
+              className={`text-sm font-medium tabular-nums flex items-center gap-0.5 ${
+                isPositiveReturn ? 'text-emerald-600' : 'text-rose-600'
+              }`}
+            >
+              {isPositiveReturn ? '↗' : '↘'}
+              {isPositiveReturn ? '+' : ''}
+              {activePoint.changePercent.toFixed(2)}%
+            </span>
+            <span
+              className={`text-xs font-normal tabular-nums mt-0.5 ${
+                isPositiveReturn ? 'text-emerald-600' : 'text-rose-600'
+              }`}
+            >
+              {isPositiveReturn ? '+' : ''}€{activePoint.changeEur.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
         </div>
 
-        <div className="flex flex-col items-end">
-          <span
-            className={`text-sm font-black tabular-nums flex items-center gap-0.5 ${
-              isPositiveReturn ? 'text-emerald-600' : 'text-rose-600'
-            }`}
-          >
-            {isPositiveReturn ? '↗' : '↘'}
-            {isPositiveReturn ? '+' : ''}
-            {activePoint.changePercent.toFixed(2)}%
-          </span>
-          <span
-            className={`text-xs font-bold tabular-nums mt-0.5 ${
-              isPositiveReturn ? 'text-emerald-600' : 'text-rose-600'
-            }`}
-          >
-            {isPositiveReturn ? '+' : ''}€{activePoint.changeEur.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </span>
-        </div>
+        {/* Linha Amarela do Benchmark SXR8.DE quando ativo */}
+        {isBenchmarkActive && (
+          <div className="flex items-center justify-between mt-1 pt-1 border-t border-amber-100/70">
+            <div className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-amber-400 inline-block shadow-sm" />
+              <span className="text-xs font-bold text-amber-600 uppercase tracking-wider">SXR8.DE</span>
+              <span className="text-base font-bold text-amber-600 tracking-tight tabular-nums">
+                {activeBenchmarkValue !== null
+                  ? `€${activeBenchmarkValue.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                  : '—'}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium text-amber-700 tabular-nums">
+                {activeBenchmarkPct !== null
+                  ? `${isBenchmarkPositive ? '+' : ''}${activeBenchmarkPct.toFixed(2)}%`
+                  : '...'}
+              </span>
+              {activeBenchmarkDiffEur !== null && (
+                <span className="text-xs font-normal text-amber-600/90 tabular-nums">
+                  ({activeBenchmarkDiffEur >= 0 ? '+' : ''}€{activeBenchmarkDiffEur.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                </span>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* 2. Gráfico Sparkline Simples em Linha Azul Fluida com Crosshair Vertical */}
+      {/* 2. Gráfico Sparkline em Linha Azul Fluida Fina, sem gradiente, sem grelha e sem eixos */}
       <div className="w-full relative my-1">
+        {/* Data agregada ao lado esquerdo da linha vertical, a uma altura fixa */}
+        {activePointIndex !== null && (
+          <div
+            className="absolute top-1 pointer-events-none z-10 pr-2 transition-transform duration-75 ease-out"
+            style={{
+              left: `${(getX(activePointIndex) / width) * 100}%`,
+              transform: getX(activePointIndex) < 70 ? 'translateX(6px)' : 'translateX(-100%)',
+            }}
+          >
+            <span className="text-xs font-medium text-slate-500 whitespace-nowrap">
+              {activePoint.dateStr}
+            </span>
+          </div>
+        )}
+
         <svg
           ref={svgRef}
           viewBox={`0 0 ${width} ${height}`}
@@ -387,70 +746,92 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           onPointerLeave={handlePointerLeave}
           onPointerUp={handlePointerLeave}
         >
-          <defs>
-            <linearGradient id="homeBlueGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#2563EB" stopOpacity="0.22" />
-              <stop offset="100%" stopColor="#2563EB" stopOpacity="0.0" />
-            </linearGradient>
-          </defs>
-
-          {/* Área com gradiente azul suave */}
-          {areaD && <path d={areaD} fill="url(#homeBlueGradient)" />}
-
-          {/* Linha Principal do Gráfico (AZUL #2563EB - curva suave Bézier, sem eixos, sem grelha, sem linha horizontal de fundo) */}
-          {smoothPathD && (
+          {/* Linha do Benchmark SXR8.DE (S&P 500) em AMARELO quando ativo */}
+          {isBenchmarkActive && benchmarkSmoothPathD && (
             <path
-              d={smoothPathD}
+              d={benchmarkSmoothPathD}
               fill="none"
-              stroke="#2563EB"
-              strokeWidth="2.75"
+              stroke="#F59E0B"
+              strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
             />
           )}
 
-          {/* Crosshair Interativo: Linha Vertical Tracejada que segue o dedo ao longo da curva */}
+          {/* Linha Principal do Gráfico (AZUL #2563EB - curva suave Bézier fina, limpa, sem preenchimento, sem grelha) */}
+          {smoothPathD && (
+            <path
+              d={smoothPathD}
+              fill="none"
+              stroke="#2563EB"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          )}
+
+          {/* Crosshair Interativo: Linha Vertical Tracejada de extremo a extremo do gráfico, sem bolinhas */}
           {activePointIndex !== null && (
-            <g>
-              <line
-                x1={getX(activePointIndex)}
-                y1={paddingTop}
-                x2={getX(activePointIndex)}
-                y2={height - paddingBottom}
-                stroke="#64748B"
-                strokeWidth="1.25"
-                strokeDasharray="4 4"
-              />
-              {/* Ponto azul com contorno branco sobre a linha no cruzamento */}
-              <circle
-                cx={getX(activePointIndex)}
-                cy={getY(activePoint.value)}
-                r="5.5"
-                fill="#2563EB"
-                stroke="#FFFFFF"
-                strokeWidth="2.5"
-                className="shadow-md"
-              />
-            </g>
+            <line
+              x1={getX(activePointIndex)}
+              y1={0}
+              x2={getX(activePointIndex)}
+              y2={height}
+              stroke="#94A3B8"
+              strokeWidth="1.25"
+              strokeDasharray="4 4"
+            />
           )}
         </svg>
       </div>
 
-      {/* 3. Rodapé do Gráfico: Botão "+ Benchmark" / "+ Comparar" e Seletor de Período em Português */}
-      <div className="flex items-center justify-between mt-3 pt-3 border-t border-slate-100">
-        {/* Botão visual '+ Benchmark' sem funcionalidade por agora */}
+      {/* 3. Ação "+ Benchmark" / Comparação SXR8.DE alinhada à direita sob o gráfico */}
+      <div className="w-full flex items-center justify-between mt-2 mb-4">
+        {/* Legenda de comparação quando ativo */}
+        {isBenchmarkActive ? (
+          <div className="flex items-center gap-3 text-xs">
+            <div className="flex items-center gap-1.5 font-medium text-blue-600">
+              <span className="w-2.5 h-0.5 bg-blue-600 rounded-full inline-block" />
+              <span>Portfólio ({activePoint.changePercent >= 0 ? '+' : ''}{activePoint.changePercent.toFixed(2)}%)</span>
+            </div>
+            <div className="flex items-center gap-1.5 font-medium text-amber-600">
+              <span className="w-2.5 h-0.5 bg-amber-500 rounded-full inline-block" />
+              <span>
+                SXR8.DE (
+                {isBenchmarkLoading
+                  ? 'A carregar...'
+                  : activeBenchmarkPct !== null && !isNaN(activeBenchmarkPct)
+                  ? `${activeBenchmarkPct >= 0 ? '+' : ''}${activeBenchmarkPct.toFixed(2)}%`
+                  : '—'}
+                )
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div />
+        )}
+
         <button
           type="button"
           id="btn-benchmark"
-          className="text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200/80 px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
-          onClick={(e) => e.preventDefault()}
+          className={`text-sm font-normal transition-colors flex items-center gap-1 cursor-pointer select-none active:opacity-70 ${
+            isBenchmarkActive
+              ? 'text-amber-700 font-medium bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200/60'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+          onClick={() => setIsBenchmarkActive((prev) => !prev)}
         >
-          <span className="text-sm leading-none">+</span> Benchmark
+          <span className="text-base font-light leading-none">
+            {isBenchmarkActive ? '✕' : '+'}
+          </span>
+          <span>{isBenchmarkActive ? 'SXR8.DE' : 'Benchmark'}</span>
         </button>
+      </div>
 
-        {/* Seletor de período em português: "1D" | "1S" | "1M" | "3M" | "1A" | "Tudo" */}
-        <div className="flex items-center gap-1 bg-slate-100/80 p-1 rounded-xl">
-          {(['1D', '1S', '1M', '3M', '1A', 'Tudo'] as TimeRange[]).map((range) => {
+      {/* 4. Seletor de Período idêntico ao gráfico de ações (pílulas com cantos arredondados, perfeitamente ajustadas à largura) */}
+      <div className="w-full flex items-center justify-center mt-1">
+        <div className="w-full max-w-sm flex items-center justify-between gap-1 py-1">
+          {(['1D', '1S', '1M', '3M', '6M', '1A', 'Tudo'] as TimeRange[]).map((range) => {
             const isActive = selectedRange === range;
             return (
               <button
@@ -461,10 +842,10 @@ export const HomeTab: React.FC<HomeTabProps> = ({
                   setSelectedRange(range);
                   setActivePointIndex(null);
                 }}
-                className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                className={`flex-1 py-1 text-xs rounded-full font-medium transition-all text-center cursor-pointer select-none ${
                   isActive
-                    ? 'bg-white text-slate-900 shadow-2xs font-black'
-                    : 'text-slate-500 hover:text-slate-800'
+                    ? 'bg-sky-100 text-sky-700 font-semibold'
+                    : 'text-slate-400 hover:text-slate-600'
                 }`}
               >
                 {range}

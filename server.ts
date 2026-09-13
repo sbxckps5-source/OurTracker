@@ -30,11 +30,11 @@ async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutM
 const CHART_RANGE_CONFIG: Record<string, { range: string; interval: string }> = {
   '1d': { range: '1d', interval: '2m' },
   '1w': { range: '5d', interval: '15m' },
-  '1m': { range: '1mo', interval: '30m' },
+  '1m': { range: '1mo', interval: '1d' },
   '3m': { range: '3mo', interval: '1d' },
   '6m': { range: '6mo', interval: '1d' },
   '1y': { range: '1y', interval: '1d' },
-  'max': { range: 'max', interval: '1mo' },
+  'max': { range: 'max', interval: '1d' },
 };
 
 async function fetchSingleYahooSymbol(symbol: string) {
@@ -713,10 +713,13 @@ async function startServer() {
       const fxRate = await getFxRateToEur(isGBp ? 'GBP' : quote.currency);
       const nativePrice = quote.price;
       const priceInEur = isGBp ? (nativePrice / 100) * fxRate : nativePrice * fxRate;
+      const nativePrevClose = quote.previousClose ?? nativePrice;
+      const previousCloseInEur = isGBp ? (nativePrevClose / 100) * fxRate : nativePrevClose * fxRate;
 
       res.json({
         ...quote,
         priceInEur: Number(priceInEur.toFixed(4)),
+        previousCloseInEur: Number(previousCloseInEur.toFixed(4)),
         fxRateToEur: Number(fxRate.toFixed(4)),
       });
     } catch (err: any) {
@@ -744,6 +747,8 @@ async function startServer() {
             const fxRate = await getFxRateToEur(isGBp ? 'GBP' : quote.currency);
             const nativePrice = Number(quote.price);
             const priceInEur = isGBp ? (nativePrice / 100) * fxRate : nativePrice * fxRate;
+            const nativePrevClose = quote.previousClose ?? nativePrice;
+            const previousCloseInEur = isGBp ? (nativePrevClose / 100) * fxRate : nativePrevClose * fxRate;
 
             if (isNaN(priceInEur) || priceInEur <= 0) {
               results[key] = { error: true, errorMessage: 'Cotação indisponível' };
@@ -753,6 +758,7 @@ async function startServer() {
             results[key] = {
               ...quote,
               priceInEur: Number(priceInEur.toFixed(4)),
+              previousCloseInEur: Number(previousCloseInEur.toFixed(4)),
               fxRateToEur: Number(fxRate.toFixed(4)),
             };
           } catch (e: any) {

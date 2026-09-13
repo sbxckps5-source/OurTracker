@@ -331,6 +331,7 @@ export function computePortfolio(
     const isError = !quote || Boolean(quote.error) || !quote.priceInEur || Number(quote.priceInEur) <= 0;
 
     const currentPriceInEur = isError ? 0 : Number(quote.priceInEur);
+    const previousPriceInEur = isError ? 0 : Number(quote.previousCloseInEur ?? quote.priceInEur);
     const nativePrice = isError ? 0 : Number(quote.price || 0);
     const nativeCurrency = isError ? 'EUR' : (quote.currency || 'EUR');
     const fxRateToEur = isError ? 1.0 : Number(quote.fxRateToEur || 1.0);
@@ -338,6 +339,7 @@ export function computePortfolio(
     const changePercent = isError ? undefined : quote?.changePercent;
     const monthReturnPercent = isError ? undefined : quote?.monthReturnPercent;
     const value = isError ? 0 : Number((holding.shares * currentPriceInEur).toFixed(2));
+    const previousValue = isError ? 0 : Number((holding.shares * previousPriceInEur).toFixed(2));
     const fallbackColor = holding.color || getDistinctColor(idx);
 
     // Calcular rentabilidade real considerando todos os aportes (valorAtual vs totalInvestido)
@@ -375,10 +377,12 @@ export function computePortfolio(
       name,
       shares: holding.shares,
       currentPrice: currentPriceInEur,
+      previousPrice: previousPriceInEur,
       nativePrice,
       nativeCurrency,
       fxRateToEur,
       value,
+      previousValue,
       allocationPercent: 0,
       changePercent,
       monthReturnPercent,
