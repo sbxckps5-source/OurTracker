@@ -88,13 +88,13 @@ try {
 
 const app = initializeApp({
   credential: cert(serviceAccount),
-  projectId: serviceAccount.project_id || 'vigilant-courage-4xctm',
+  projectId: serviceAccount.project_id || 'gen-lang-client-0800917980',
 });
 
 // A base de dados específica configurada no projeto
 const databaseId =
   process.env.FIREBASE_DATABASE_ID ||
-  'ai-studio-portfoliotracker-c51cf1d7-2725-435b-b54a-2c787dd725fd';
+  'ai-studio-ourtracker-a6232195-a0c1-4196-8aea-276fd2cc0112';
 
 const db = getFirestore(app, databaseId);
 

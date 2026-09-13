@@ -136,9 +136,19 @@ export function subscribeUserHoldings(
             : undefined,
         });
       });
+      if (snapshot.empty && localCached.length > 0) {
+        // Se o novo banco do Firestore estiver vazio mas houver dados guardados localmente,
+        // sincroniza automaticamente para o novo banco de dados sem perder nada
+        localCached.forEach((h) => {
+          saveHolding(portfolioId, h.ticker, h.shares, h.color, h.purchases).catch(console.warn);
+        });
+      }
+
       // Update local storage cache
-      setLocalHoldings(portfolioId, holdings);
-      onUpdate(holdings);
+      if (!snapshot.empty) {
+        setLocalHoldings(portfolioId, holdings);
+      }
+      onUpdate(holdings.length > 0 ? holdings : localCached);
     },
     (err) => {
       // Gracefully log network / unavailable errors without crashing the app
