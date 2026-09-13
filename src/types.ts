@@ -80,3 +80,13 @@ export interface PdfParseResponse {
 
 export type TabType = 'home' | 'allocation' | 'settings';
 
+export interface DailySnapshotDoc {
+  date: string; // YYYY-MM-DD
+  timestamp: number;
+  totalValue: number;
+  totalInvested: number;
+  returnPercent: number;
+  diffEur?: number;
+  positionsCount?: number;
+}
+

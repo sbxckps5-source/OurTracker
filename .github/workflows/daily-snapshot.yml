@@ -1,0 +1,48 @@
+name: Daily Portfolio Snapshot
+
+on:
+  schedule:
+    # Executa todos os dias às 22:00 UTC (após o encerramento dos mercados americano e europeu)
+    - cron: '0 22 * * *'
+  # Permite execução manual a qualquer momento via interface do GitHub (Aba Actions -> Run workflow)
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Ação a executar'
+        required: true
+        default: 'snapshot'
+        type: choice
+        options:
+          - 'snapshot'
+          - 'backfill (migração retroativa)'
+
+jobs:
+  portfolio-task:
+    name: Daily Snapshot or Historical Backfill
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Run Selected Task
+        env:
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+          FIREBASE_DATABASE_ID: 'ai-studio-portfoliotracker-c51cf1d7-2725-435b-b54a-2c787dd725fd'
+        run: |
+          if [ "${{ github.event.inputs.action }}" = "backfill (migração retroativa)" ]; then
+            echo "🚀 A executar migração retroativa do histórico..."
+            node scripts/backfillSnapshots.mjs
+          else
+            echo "📸 A executar snapshot diário do portfólio..."
+            node scripts/dailySnapshot.mjs
+          fi

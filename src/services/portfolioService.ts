@@ -11,7 +11,7 @@ import {
   Unsubscribe,
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { HoldingDoc, PortfolioPosition, PurchaseRecord } from '../types';
+import { HoldingDoc, PortfolioPosition, PurchaseRecord, DailySnapshotDoc } from '../types';
 import { convertTickerToYahoo } from '../utils/yahooClient';
 
 // High-contrast, maximally distinct color palette ensuring adjacent and overall colors are never identical or confusing
@@ -567,5 +567,38 @@ export async function restoreCloudBackup(backup: BackupDoc, portfolioId: string 
 export async function deleteCloudBackup(backupId: string, portfolioId: string = 'main'): Promise<void> {
   const backupRef = doc(db, 'portfolios', portfolioId, 'backups', backupId);
   await deleteDoc(backupRef);
+}
+
+export function subscribeDailySnapshots(
+  portfolioId: string = 'main',
+  onUpdate: (snapshots: DailySnapshotDoc[]) => void,
+  onError?: (error: Error) => void
+): Unsubscribe {
+  const colRef = collection(db, 'portfolios', portfolioId, 'dailySnapshots');
+  const q = query(colRef, orderBy('date', 'asc'));
+
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const list: DailySnapshotDoc[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        list.push({
+          date: docSnap.id || data.date,
+          timestamp: Number(data.timestamp || (data.date ? new Date(data.date).getTime() : Date.now())),
+          totalValue: Number(data.totalValue || 0),
+          totalInvested: Number(data.totalInvested || 0),
+          returnPercent: Number(data.returnPercent || 0),
+          diffEur: data.diffEur !== undefined ? Number(data.diffEur) : Number(((data.totalValue || 0) - (data.totalInvested || 0)).toFixed(2)),
+          positionsCount: data.positionsCount ? Number(data.positionsCount) : undefined,
+        });
+      });
+      onUpdate(list);
+    },
+    (err) => {
+      console.warn('⚠️ Erro ao escutar dailySnapshots:', err);
+      if (onError) onError(err);
+    }
+  );
 }
 
