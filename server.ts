@@ -1,6 +1,5 @@
 import express from 'express';
 import path from 'path';
-import { createServer as createViteServer } from 'vite';
 import { getExchangeRate, convertCurrency } from './serverFx';
 import { parsePortfolioPdf } from './serverPdf';
 
@@ -608,12 +607,10 @@ async function getFxRateToEur(fromCurrency: string): Promise<number> {
   }
 }
 
-async function startServer() {
-  const app = express();
-  const PORT = 3000;
+const app = express();
 
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
   // API: Search Yahoo Finance instruments
   app.get('/api/search', async (req, res) => {
@@ -816,24 +813,36 @@ async function startServer() {
     }
   });
 
-  // Vite middleware setup
-  if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
+// In development (v0 preview / local) this file is executed directly via
+// `tsx server.ts`, so we attach the Vite dev middleware and start a listener.
+// On Vercel this same Express app is imported by `api/index.ts` and run as a
+// serverless function (the VERCEL env var is set there), so we must NOT start a
+// listener in that case — otherwise the `/api/*` routes would never be served.
+if (!process.env.VERCEL) {
+  void (async () => {
+    const PORT = 3000;
+    if (process.env.NODE_ENV !== 'production') {
+      // Computed specifier so bundlers (Vercel) never pull Vite into the
+      // serverless function; this branch only ever runs in local/preview dev.
+      const viteModuleName = 'vite';
+      const { createServer: createViteServer } = await import(viteModuleName);
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: 'spa',
+      });
+      app.use(vite.middlewares);
+    } else {
+      const distPath = path.join(process.cwd(), 'dist');
+      app.use(express.static(distPath));
+      app.get('*', (req, res) => {
+        res.sendFile(path.join(distPath, 'index.html'));
+      });
+    }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  })();
 }
 
-startServer();
+export default app;
