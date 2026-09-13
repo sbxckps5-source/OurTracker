@@ -93,11 +93,10 @@ const app = initializeApp({
   projectId: serviceAccount.project_id || 'gen-lang-client-0800917980',
 });
 
-const databaseId =
-  process.env.FIREBASE_DATABASE_ID ||
-  'ai-studio-ourtracker-a6232195-a0c1-4196-8aea-276fd2cc0112';
-
-const db = getFirestore(app, databaseId);
+// A base de dados (default) gratuita
+const db = process.env.FIREBASE_DATABASE_ID && process.env.FIREBASE_DATABASE_ID !== '(default)'
+  ? getFirestore(app, process.env.FIREBASE_DATABASE_ID)
+  : getFirestore(app);
 
 // Formatador YYYY-MM-DD (UTC)
 function toIsoDate(dateObj) {

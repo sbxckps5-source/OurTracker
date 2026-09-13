@@ -15,6 +15,7 @@ on:
         options:
           - 'snapshot'
           - 'backfill (migração retroativa)'
+          - 'migrar para base (default)'
 
 jobs:
   portfolio-task:
@@ -36,9 +37,11 @@ jobs:
       - name: Run Selected Task
         env:
           FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
-          FIREBASE_DATABASE_ID: 'ai-studio-ourtracker-a6232195-a0c1-4196-8aea-276fd2cc0112'
         run: |
-          if [ "${{ github.event.inputs.action }}" = "backfill (migração retroativa)" ]; then
+          if [ "${{ github.event.inputs.action }}" = "migrar para base (default)" ]; then
+            echo "🚚 A executar cópia completa dos dados para a base (default)..."
+            node scripts/migrateToDefaultDb.mjs
+          elif [ "${{ github.event.inputs.action }}" = "backfill (migração retroativa)" ]; then
             echo "🚀 A executar migração retroativa do histórico..."
             node scripts/backfillSnapshots.mjs
           else
