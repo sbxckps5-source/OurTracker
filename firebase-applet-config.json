@@ -1,12 +1,12 @@
 {
-  "projectId": "vigilant-courage-4xctm",
-  "appId": "1:505912947390:web:7411690c9d8962b954e4ef",
-  "apiKey": "AIzaSyBNrsv8gw52iKicqVFZQoqs-x-UOVUudgw",
-  "authDomain": "vigilant-courage-4xctm.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-portfoliotracker-c51cf1d7-2725-435b-b54a-2c787dd725fd",
-  "storageBucket": "vigilant-courage-4xctm.firebasestorage.app",
-  "messagingSenderId": "505912947390",
+  "projectId": "ourtrackerv1",
+  "appId": "1:114801492718:web:dbe0724bf9dd63e9ca29ff",
+  "apiKey": "AIzaSyD3VlfLKPnNrxYhPe2tjnkMHxMAXVOSzVo",
+  "authDomain": "ourtrackerv1.firebaseapp.com",
+  "firestoreDatabaseId": "(default)",
+  "storageBucket": "ourtrackerv1.firebasestorage.app",
+  "messagingSenderId": "114801492718",
   "measurementId": "",
-  "oAuthClientId": "505912947390-k9khf3gd8h907bftijrsou11k3b5su31.apps.googleusercontent.com",
+  "oAuthClientId": "",
   "recaptchaSiteKey": ""
 }
