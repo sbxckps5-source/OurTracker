@@ -88,7 +88,7 @@ try {
 
 const app = initializeApp({
   credential: cert(serviceAccount),
-  projectId: serviceAccount.project_id || 'gen-lang-client-0800917980',
+  projectId: serviceAccount.project_id || 'ourtrackerfixed',
 });
 
 // A base de dados (default) gratuita
