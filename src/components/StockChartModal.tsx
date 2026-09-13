@@ -572,13 +572,6 @@ export const StockChartModal: React.FC<StockChartModalProps> = ({
   const diffPercentFromStart = startPriceEur > 0 ? (diffFromStart / startPriceEur) * 100 : 0;
   const isPositive = diffFromStart >= 0;
 
-  // Native currency (USD) price calculation
-  const assetCurrency = (chartData?.currency || position?.nativeCurrency || '').toUpperCase();
-  const isUsd = assetCurrency === 'USD';
-  const displayedPriceUsd = activePoint
-    ? (activePoint.price || (chartData?.fxRateToEur ? activePoint.priceEur / chartData.fxRateToEur : 0))
-    : (chartData?.currentPrice || position?.nativePrice || 0);
-
   // Coordinate helper
   const getIndexFromClientX = (clientX: number) => {
     if (!svgRef.current || coordinates.length === 0) return 0;
@@ -758,26 +751,15 @@ export const StockChartModal: React.FC<StockChartModalProps> = ({
           {/* Main Price Header */}
           <div className="px-5 pt-4 pb-1 shrink-0">
             <div className="flex flex-col">
-              {/* Large Current Price in EUR and discrete USD price on the right */}
-              <div className="flex items-baseline gap-2.5 flex-wrap">
-                <div className="flex items-baseline gap-1">
-                  <span className="text-lg font-bold text-slate-900">€</span>
-                  <span className="text-4xl sm:text-5xl font-black text-slate-900 tracking-tight tabular-nums">
-                    {displayedPriceEur.toLocaleString('pt-PT', {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}
-                  </span>
-                </div>
-
-                {isUsd && displayedPriceUsd > 0 && (
-                  <span className="text-lg sm:text-xl font-semibold text-slate-400 tracking-tight tabular-nums pb-0.5">
-                    ${displayedPriceUsd.toLocaleString('en-US', {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}
-                  </span>
-                )}
+              {/* Large Current Price in EUR */}
+              <div className="flex items-baseline gap-1">
+                <span className="text-lg font-bold text-slate-900">€</span>
+                <span className="text-4xl sm:text-5xl font-black text-slate-900 tracking-tight tabular-nums">
+                  {displayedPriceEur.toLocaleString('pt-PT', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                </span>
               </div>
 
               {/* % and EUR immediately below price in normal font weight (date removed) */}

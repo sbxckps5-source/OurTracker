@@ -194,29 +194,6 @@ export const AddAssetForm: React.FC<AddAssetFormProps> = ({ onBack, onSuccess })
       setIsSaving(true);
       setErrorMessage(null);
 
-      // Obter taxa de câmbio e moeda atual do ativo
-      let fxRate = 1.0;
-      let currency = 'EUR';
-      try {
-        const quoteRes = await fetch(`/api/quote/${encodeURIComponent(rawTicker)}`);
-        if (quoteRes.ok) {
-          const quoteData = await quoteRes.json();
-          fxRate = Number(quoteData.fxRateToEur || 1.0);
-          currency = (quoteData.currency || 'EUR').toUpperCase();
-        }
-      } catch (e) {
-        console.warn('Não foi possível obter taxa de câmbio, a usar 1.0', e);
-      }
-
-      const isGBp = currency === 'GBP' || currency === 'GBp';
-
-      // Atualizar priceEur com base no fxRate e moeda
-      for (let i = 0; i < parsedPurchases.length; i++) {
-        const p = parsedPurchases[i];
-        const computedEur = isGBp ? (p.price / 100) * fxRate : p.price * fxRate;
-        parsedPurchases[i].priceEur = Number(computedEur.toFixed(4));
-      }
-
       const normalizedTicker = rawTicker.toUpperCase();
       const existingDocRef = doc(db, 'portfolios', 'main', 'holdings', normalizedTicker);
       const existingSnap = await getDoc(existingDocRef);

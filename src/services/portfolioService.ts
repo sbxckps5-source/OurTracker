@@ -11,7 +11,7 @@ import {
   Unsubscribe,
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { HoldingDoc, PortfolioPosition, PurchaseRecord, DailySnapshotDoc } from '../types';
+import { HoldingDoc, PortfolioPosition, PurchaseRecord } from '../types';
 import { convertTickerToYahoo } from '../utils/yahooClient';
 
 // High-contrast, maximally distinct color palette ensuring adjacent and overall colors are never identical or confusing
@@ -136,19 +136,9 @@ export function subscribeUserHoldings(
             : undefined,
         });
       });
-      if (snapshot.empty && localCached.length > 0) {
-        // Se o novo banco do Firestore estiver vazio mas houver dados guardados localmente,
-        // sincroniza automaticamente para o novo banco de dados sem perder nada
-        localCached.forEach((h) => {
-          saveHolding(portfolioId, h.ticker, h.shares, h.color, h.purchases).catch(console.warn);
-        });
-      }
-
       // Update local storage cache
-      if (!snapshot.empty) {
-        setLocalHoldings(portfolioId, holdings);
-      }
-      onUpdate(holdings.length > 0 ? holdings : localCached);
+      setLocalHoldings(portfolioId, holdings);
+      onUpdate(holdings);
     },
     (err) => {
       // Gracefully log network / unavailable errors without crashing the app
@@ -331,7 +321,6 @@ export function computePortfolio(
     const isError = !quote || Boolean(quote.error) || !quote.priceInEur || Number(quote.priceInEur) <= 0;
 
     const currentPriceInEur = isError ? 0 : Number(quote.priceInEur);
-    const previousPriceInEur = isError ? 0 : Number(quote.previousCloseInEur ?? quote.priceInEur);
     const nativePrice = isError ? 0 : Number(quote.price || 0);
     const nativeCurrency = isError ? 'EUR' : (quote.currency || 'EUR');
     const fxRateToEur = isError ? 1.0 : Number(quote.fxRateToEur || 1.0);
@@ -339,13 +328,10 @@ export function computePortfolio(
     const changePercent = isError ? undefined : quote?.changePercent;
     const monthReturnPercent = isError ? undefined : quote?.monthReturnPercent;
     const value = isError ? 0 : Number((holding.shares * currentPriceInEur).toFixed(2));
-    const previousValue = isError ? 0 : Number((holding.shares * previousPriceInEur).toFixed(2));
     const fallbackColor = holding.color || getDistinctColor(idx);
 
     // Calcular rentabilidade real considerando todos os aportes (valorAtual vs totalInvestido)
     let totalReturnPercent: number | undefined = undefined;
-    let calculatedTotalInvested: number | undefined = undefined;
-
     if (!isError && holding.shares > 0) {
       const purchases = holding.purchases || [];
       let totalInvestido = 0;
@@ -359,7 +345,6 @@ export function computePortfolio(
       });
 
       if (totalInvestido > 0) {
-        calculatedTotalInvested = Number(totalInvestido.toFixed(2));
         const valorAtual = holding.shares * currentPriceInEur;
         totalReturnPercent = Number((((valorAtual - totalInvestido) / totalInvestido) * 100).toFixed(2));
       } else if (monthReturnPercent !== undefined) {
@@ -377,17 +362,14 @@ export function computePortfolio(
       name,
       shares: holding.shares,
       currentPrice: currentPriceInEur,
-      previousPrice: previousPriceInEur,
       nativePrice,
       nativeCurrency,
       fxRateToEur,
       value,
-      previousValue,
       allocationPercent: 0,
       changePercent,
       monthReturnPercent,
       totalReturnPercent,
-      totalInvested: calculatedTotalInvested,
       color: fallbackColor,
       isError,
       errorMessage: isError ? (quote?.errorMessage || 'Cotação indisponível') : undefined,
@@ -581,38 +563,5 @@ export async function restoreCloudBackup(backup: BackupDoc, portfolioId: string 
 export async function deleteCloudBackup(backupId: string, portfolioId: string = 'main'): Promise<void> {
   const backupRef = doc(db, 'portfolios', portfolioId, 'backups', backupId);
   await deleteDoc(backupRef);
-}
-
-export function subscribeDailySnapshots(
-  portfolioId: string = 'main',
-  onUpdate: (snapshots: DailySnapshotDoc[]) => void,
-  onError?: (error: Error) => void
-): Unsubscribe {
-  const colRef = collection(db, 'portfolios', portfolioId, 'dailySnapshots');
-  const q = query(colRef, orderBy('date', 'asc'));
-
-  return onSnapshot(
-    q,
-    (snapshot) => {
-      const list: DailySnapshotDoc[] = [];
-      snapshot.forEach((docSnap) => {
-        const data = docSnap.data();
-        list.push({
-          date: docSnap.id || data.date,
-          timestamp: Number(data.timestamp || (data.date ? new Date(data.date).getTime() : Date.now())),
-          totalValue: Number(data.totalValue || 0),
-          totalInvested: Number(data.totalInvested || 0),
-          returnPercent: Number(data.returnPercent || 0),
-          diffEur: data.diffEur !== undefined ? Number(data.diffEur) : Number(((data.totalValue || 0) - (data.totalInvested || 0)).toFixed(2)),
-          positionsCount: data.positionsCount ? Number(data.positionsCount) : undefined,
-        });
-      });
-      onUpdate(list);
-    },
-    (err) => {
-      console.warn('⚠️ Erro ao escutar dailySnapshots:', err);
-      if (onError) onError(err);
-    }
-  );
 }
 

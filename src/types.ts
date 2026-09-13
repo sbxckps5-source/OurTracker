@@ -21,17 +21,14 @@ export interface PortfolioPosition {
   name: string;
   shares: number;
   currentPrice: number; // in EUR
-  previousPrice?: number; // in EUR (yesterday's close)
   nativePrice: number; // in native currency (e.g. USD)
   nativeCurrency: string; // e.g. "USD", "EUR"
   fxRateToEur: number;
   value: number; // total position value in EUR
-  previousValue?: number; // total position value based on yesterday's close in EUR
   allocationPercent: number;
   changePercent?: number;
   monthReturnPercent?: number;
   totalReturnPercent?: number;
-  totalInvested?: number; // total acquisition cost basis in EUR
   color: string;
   isError?: boolean;
   errorMessage?: string;
@@ -81,14 +78,4 @@ export interface PdfParseResponse {
 }
 
 export type TabType = 'home' | 'allocation' | 'settings';
-
-export interface DailySnapshotDoc {
-  date: string; // YYYY-MM-DD
-  timestamp: number;
-  totalValue: number;
-  totalInvested: number;
-  returnPercent: number;
-  diffEur?: number;
-  positionsCount?: number;
-}
 
