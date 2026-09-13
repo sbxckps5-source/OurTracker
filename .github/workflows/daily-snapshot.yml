@@ -37,7 +37,7 @@ jobs:
       - name: Run Selected Task
         env:
           FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
-          FIRESTORE_DATABASE_ID: ${{ secrets.FIRESTORE_DATABASE_ID || '(default)' }}
+          FIRESTORE_DATABASE_ID: ${{ secrets.FIRESTORE_DATABASE_ID || 'ai-studio-ourtracker-d269b44d-bb64-42ab-8187-1d0e7de7e72c' }}
         run: |
           if [ "${{ github.event.inputs.action }}" = "migrar para base (default)" ]; then
             echo "🚚 A executar cópia completa dos dados para a base (default)..."

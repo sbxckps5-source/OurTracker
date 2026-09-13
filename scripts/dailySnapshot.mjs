@@ -91,15 +91,13 @@ const app = initializeApp({
   projectId: serviceAccount.project_id || 'gen-lang-client-0800917980',
 });
 
-// A base de dados do Firestore (por defeito usa a nativa gratuita '(default)')
+// A base de dados do Firestore
 const TARGET_DATABASE_ID =
   process.env.FIRESTORE_DATABASE_ID ||
   process.env.FIREBASE_DATABASE_ID ||
-  '(default)';
+  'ai-studio-ourtracker-d269b44d-bb64-42ab-8187-1d0e7de7e72c';
 
-const db = TARGET_DATABASE_ID && TARGET_DATABASE_ID !== '(default)'
-  ? getFirestore(app, TARGET_DATABASE_ID)
-  : getFirestore(app);
+const db = getFirestore(app, TARGET_DATABASE_ID);
 
 
 // 2. Obter taxa de câmbio USD -> EUR via Frankfurter (com fallback)
