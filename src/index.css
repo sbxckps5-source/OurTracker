@@ -1,0 +1,84 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --sat: env(safe-area-inset-top, 0px);
+    --sar: env(safe-area-inset-right, 0px);
+    --sab: env(safe-area-inset-bottom, 0px);
+    --sal: env(safe-area-inset-left, 0px);
+  }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    width: 100%;
+    background-color: #FFFFFF;
+    color: #0F172A;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+  }
+
+  /* Prevent automatic zooming on iOS Safari when focusing form fields */
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+
+  /* Hardware acceleration for 120Hz ProMotion screens */
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+@keyframes shimmerText {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.loading-gradient-text {
+  background: linear-gradient(
+    90deg,
+    #0284c7 0%,
+    #38bdf8 25%,
+    #0ea5e9 50%,
+    #7dd3fc 75%,
+    #0284c7 100%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmerText 3s ease-in-out infinite;
+  will-change: background-position;
+}
+
+.ios-touch-active {
+  transition: transform 0.15s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.15s ease;
+  will-change: transform, opacity;
+}
+
+.ios-touch-active:active {
+  transform: scale(0.96);
+  opacity: 0.85;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

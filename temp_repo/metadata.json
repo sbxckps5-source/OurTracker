@@ -1,0 +1,6 @@
+{
+  "name": "OurTracker",
+  "description": "OurTracker - Portfolio allocation and tracking application designed for iPhone Safari with touch-first interactions.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

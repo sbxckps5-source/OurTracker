@@ -1,0 +1,56 @@
+{
+  "entities": {
+    "Holding": {
+      "title": "Holding",
+      "description": "Stock or ETF holding position in a portfolio",
+      "type": "object",
+      "properties": {
+        "ticker": { "type": "string", "description": "Stock ticker symbol" },
+        "shares": { "type": "number", "description": "Total number of shares" },
+        "createdAt": { "type": "number", "description": "Timestamp created" },
+        "color": { "type": "string", "description": "Display color code" },
+        "purchases": { "type": "array", "description": "List of individual purchase records" }
+      },
+      "required": ["ticker", "shares"]
+    },
+    "PortfolioMeta": {
+      "title": "PortfolioMeta",
+      "description": "Metadata and cash deposit history for a portfolio",
+      "type": "object",
+      "properties": {
+        "currency": { "type": "string", "description": "Base currency like EUR" },
+        "totalDeposited": { "type": "number", "description": "Cumulative deposits" },
+        "deposits": { "type": "array", "description": "List of deposit entries" },
+        "updatedAt": { "type": "number", "description": "Last update timestamp" }
+      }
+    },
+    "Backup": {
+      "title": "Backup",
+      "description": "Snapshot backup of portfolio state",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Backup document identifier" },
+        "timestamp": { "type": "number", "description": "Timestamp of backup creation" },
+        "formattedDate": { "type": "string", "description": "Formatted date string for display" },
+        "holdingsCount": { "type": "number", "description": "Number of holdings included" },
+        "holdings": { "type": "array", "description": "Array of holdings snapshots" },
+        "meta": { "type": "object", "description": "Portfolio metadata snapshot" }
+      },
+      "required": ["id", "timestamp", "holdings"]
+    }
+  },
+  "firestore": {
+    "/portfolios/{portfolioId}/holdings/{ticker}": {
+      "schema": "Holding",
+      "description": "Collection of holdings for a given portfolio"
+    },
+    "/portfolios/{portfolioId}": {
+      "schema": "PortfolioMeta",
+      "description": "Document holding top-level portfolio metadata and deposit logs"
+    },
+    "/portfolios/{portfolioId}/backups/{backupId}": {
+      "schema": "Backup",
+      "description": "Cloud backups collection for restoring prior states"
+    }
+  }
+}
