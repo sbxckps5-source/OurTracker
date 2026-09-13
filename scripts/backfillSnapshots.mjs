@@ -90,13 +90,19 @@ try {
 
 const app = initializeApp({
   credential: cert(serviceAccount),
-  projectId: serviceAccount.project_id || 'gen-lang-client-0800917980',
+  projectId: serviceAccount.project_id || 'ourtrackerfixed',
 });
 
-// A base de dados (default) gratuita
-const db = process.env.FIREBASE_DATABASE_ID && process.env.FIREBASE_DATABASE_ID !== '(default)'
-  ? getFirestore(app, process.env.FIREBASE_DATABASE_ID)
+// A base de dados específica do Firestore
+const TARGET_DATABASE_ID =
+  process.env.FIRESTORE_DATABASE_ID ||
+  process.env.FIREBASE_DATABASE_ID ||
+  'ai-studio-ourtracker-d269b44d-bb64-42ab-8187-1d0e7de7e72c';
+
+const db = TARGET_DATABASE_ID && TARGET_DATABASE_ID !== '(default)'
+  ? getFirestore(app, TARGET_DATABASE_ID)
   : getFirestore(app);
+
 
 // Formatador YYYY-MM-DD (UTC)
 function toIsoDate(dateObj) {
