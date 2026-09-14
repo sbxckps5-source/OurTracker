@@ -37,106 +37,102 @@ const CHART_RANGE_CONFIG: Record<string, { range: string; interval: string }> = 
 };
 
 async function fetchSingleYahooSymbol(symbol: string) {
-  const headers = {
-    'User-Agent':
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    Accept: 'application/json, text/plain, */*',
-    'Accept-Language': 'en-US,en;q=0.9',
-  };
+  const hosts = ['query1.finance.yahoo.com', 'query2.finance.yahoo.com'];
+  let lastError: any = null;
 
-  let response: Response | null = null;
-  try {
-    response = await fetchWithTimeout(
-      `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
-        symbol
-      )}?interval=1d&range=3mo`,
-      { headers },
-      4500
-    );
-  } catch {
-    // try fallback host
-  }
-
-  if (!response || !response.ok) {
+  for (const host of hosts) {
     try {
-      response = await fetchWithTimeout(
-        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
+      const response = await fetchWithTimeout(
+        `https://${host}/v8/finance/chart/${encodeURIComponent(
           symbol
         )}?interval=1d&range=3mo`,
-        { headers },
+        {
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            Accept: 'application/json, text/plain, */*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            Referer: 'https://finance.yahoo.com/',
+          },
+        },
         4500
       );
-    } catch {
-      // ignore
-    }
-  }
 
-  if (!response || !response.ok) {
-    throw new Error(`Yahoo Finance HTTP ${response ? response.status : 'timeout'}`);
-  }
-
-  const json = await response.json();
-  const result = json?.chart?.result?.[0];
-  if (!result || !result.meta) {
-    throw new Error(`Sem dados para o símbolo: ${symbol}`);
-  }
-
-  const meta = result.meta;
-  const price = meta.regularMarketPrice ?? meta.chartPreviousClose ?? 0;
-  if (!price || Number(price) <= 0) {
-    throw new Error(`Preço nulo ou inválido para ${symbol}`);
-  }
-
-  const previousClose = meta.chartPreviousClose ?? meta.previousClose ?? price;
-  const change = Number(price) - Number(previousClose);
-  const changePercent = previousClose ? (change / Number(previousClose)) * 100 : 0;
-
-  // Calculate Month-to-Date (MTD) Return from the start of the current month
-  let monthReturnPercent = Number(changePercent);
-  const timestamps: number[] = result.timestamp || [];
-  const closes: (number | null)[] = result.indicators?.quote?.[0]?.close || [];
-
-  if (timestamps.length > 0 && closes.length > 0) {
-    const now = new Date();
-    const currentMonth = now.getMonth();
-    const currentYear = now.getFullYear();
-
-    let firstMonthPrice: number | null = null;
-    let lastPrevMonthPrice: number | null = null;
-
-    for (let i = 0; i < timestamps.length; i++) {
-      const c = closes[i];
-      if (c === null || c === undefined || isNaN(c) || c <= 0) continue;
-      const d = new Date(timestamps[i] * 1000);
-      if (d.getFullYear() === currentYear && d.getMonth() === currentMonth) {
-        if (firstMonthPrice === null) {
-          firstMonthPrice = c;
-        }
-      } else if (
-        d.getFullYear() < currentYear ||
-        (d.getFullYear() === currentYear && d.getMonth() < currentMonth)
-      ) {
-        lastPrevMonthPrice = c;
+      if (!response.ok) {
+        lastError = new Error(`Yahoo Finance ${host} HTTP ${response.status}`);
+        continue;
       }
-    }
 
-    const monthBase = lastPrevMonthPrice || firstMonthPrice;
-    if (monthBase && monthBase > 0) {
-      monthReturnPercent = ((Number(price) - monthBase) / monthBase) * 100;
+      const json = await response.json();
+      const result = json?.chart?.result?.[0];
+      if (!result || !result.meta) {
+        lastError = new Error(`Sem dados para o símbolo: ${symbol}`);
+        continue;
+      }
+
+      const meta = result.meta;
+      const price = meta.regularMarketPrice ?? meta.chartPreviousClose ?? 0;
+      if (!price || Number(price) <= 0) {
+        lastError = new Error(`Preço nulo ou inválido para ${symbol}`);
+        continue;
+      }
+
+      const previousClose = meta.chartPreviousClose ?? meta.previousClose ?? price;
+      const change = Number(price) - Number(previousClose);
+      const changePercent = previousClose ? (change / Number(previousClose)) * 100 : 0;
+
+      // Calculate Month-to-Date (MTD) Return from the start of the current month
+      let monthReturnPercent = Number(changePercent);
+      const timestamps: number[] = result.timestamp || [];
+      const closes: (number | null)[] = result.indicators?.quote?.[0]?.close || [];
+
+      if (timestamps.length > 0 && closes.length > 0) {
+        const now = new Date();
+        const currentMonth = now.getMonth();
+        const currentYear = now.getFullYear();
+
+        let firstMonthPrice: number | null = null;
+        let lastPrevMonthPrice: number | null = null;
+
+        for (let i = 0; i < timestamps.length; i++) {
+          const c = closes[i];
+          if (c === null || c === undefined || isNaN(c) || c <= 0) continue;
+          const d = new Date(timestamps[i] * 1000);
+          if (d.getFullYear() === currentYear && d.getMonth() === currentMonth) {
+            if (firstMonthPrice === null) {
+              firstMonthPrice = c;
+            }
+          } else if (
+            d.getFullYear() < currentYear ||
+            (d.getFullYear() === currentYear && d.getMonth() < currentMonth)
+          ) {
+            lastPrevMonthPrice = c;
+          }
+        }
+
+        const monthBase = lastPrevMonthPrice || firstMonthPrice;
+        if (monthBase && monthBase > 0) {
+          monthReturnPercent = ((Number(price) - monthBase) / monthBase) * 100;
+        }
+      }
+
+      return {
+        symbol: meta.symbol || symbol,
+        name: meta.shortName || meta.longName || meta.symbol || symbol,
+        currency: (meta.currency || 'USD').toUpperCase(),
+        price: Number(price),
+        change: Number(change),
+        changePercent: Number(changePercent),
+        monthReturnPercent: Number(monthReturnPercent.toFixed(2)),
+        previousClose: Number(previousClose),
+        timestamp: Date.now(),
+      };
+    } catch (err) {
+      lastError = err;
     }
   }
 
-  return {
-    symbol: meta.symbol || symbol,
-    name: meta.shortName || meta.longName || meta.symbol || symbol,
-    currency: (meta.currency || 'USD').toUpperCase(),
-    price: Number(price),
-    change: Number(change),
-    changePercent: Number(changePercent),
-    monthReturnPercent: Number(monthReturnPercent.toFixed(2)),
-    previousClose: Number(previousClose),
-    timestamp: Date.now(),
-  };
+  throw lastError || new Error(`Yahoo Finance indisponível para ${symbol}`);
 }
 
 async function fetchFromYahoo(ticker: string) {
